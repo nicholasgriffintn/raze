@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-package:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test
+        run: swift test
+
+      - name: Validate package metadata
+        run: |
+          swift package dump-package >/dev/null
+          plutil -lint Support/Info.plist
+          bash -n Scripts/package-app.sh
+
+      - name: Package universal app
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          VERSION: 0.0.0
+        run: bash Scripts/package-app.sh
+
+      - name: Upload structural build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Raze-${{ github.sha }}
+          path: |
+            dist/Raze.zip
+            dist/Raze.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
