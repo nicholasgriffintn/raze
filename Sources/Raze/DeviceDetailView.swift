@@ -21,6 +21,7 @@ struct DeviceDetailView: View {
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background {
             LinearGradient(
                 colors: [
@@ -39,31 +40,62 @@ private struct DeviceHeader: View {
     let device: RazerDevice
 
     var body: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.green.opacity(0.12))
-                Image(systemName: device.kind.systemImage)
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(Color.green)
-            }
-            .frame(width: 64, height: 64)
-
+        HStack(spacing: 22) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(device.productName)
                     .font(.title2.weight(.semibold))
-                HStack(spacing: 8) {
+                HStack(spacing: 7) {
                     Text(String(format: "PID %04X", device.productID))
                     Text("•")
                     Text(device.supportsLighting ? "Community control" : "Detection only")
                 }
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
+
+                if device.supportsLighting {
+                    HStack(spacing: 7) {
+                        CapabilityChip(
+                            title: "\(device.targets.count) \(device.targets.count == 1 ? "zone" : "zones")",
+                            systemImage: "scope"
+                        )
+                        CapabilityChip(
+                            title: "\(device.supportedEffects.count) effects",
+                            systemImage: "sparkles"
+                        )
+                        if device.supportsBrightness {
+                            CapabilityChip(title: "Brightness", systemImage: "sun.max")
+                        }
+                    }
+                    .padding(.top, 7)
+                }
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if device.targets.count <= 1 {
+                DeviceArtwork(kind: device.kind)
+                    .frame(width: 210)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(18)
         .controlCard()
+    }
+}
+
+private struct CapabilityChip: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                Color.primary.opacity(0.05),
+                in: Capsule(style: .continuous)
+            )
     }
 }
 
@@ -77,11 +109,11 @@ private struct LightingCard: View {
                 .font(.headline)
 
             if device.targets.count > 1 {
-                Picker("Zone", selection: $model.target) {
-                    ForEach(device.targets, id: \.self) { target in
-                        Text(target.displayName).tag(target)
-                    }
-                }
+                DeviceZoneSelector(device: device, selection: $model.target)
+            } else if let target = device.targets.first {
+                Label(target.displayName, systemImage: "scope")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
 
             EffectEditor(
@@ -100,11 +132,10 @@ private struct LightingCard: View {
                     }
                     Slider(value: $model.brightness, in: 0...100, step: 1) {
                         Text("Brightness")
-                    } minimumValueLabel: {
-                        Text("0%")
-                    } maximumValueLabel: {
-                        Text("100%")
                     }
+                    .labelsHidden()
+                    .accessibilityLabel("Brightness")
+                    .accessibilityValue("\(Int(model.brightness)) percent")
                 }
             }
 

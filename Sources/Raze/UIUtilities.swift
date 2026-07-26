@@ -25,6 +25,16 @@ extension LightingTarget {
         case .backlight: "Backlight"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .all: "circle.grid.cross"
+        case .scrollWheel: "scroll"
+        case .battery: "battery.75percent"
+        case .logo: "seal"
+        case .backlight: "lightbulb.led"
+        }
+    }
 }
 
 extension LightingEffectKind {

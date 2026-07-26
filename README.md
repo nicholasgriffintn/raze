@@ -21,7 +21,7 @@ Raze requires macOS 13 or later.
 
 - Automatic discovery and refresh
 - Static, spectrum, breathing, reactive, wave, and off effects where supported
-- Per-zone lighting and brightness where supported
+- Interactive device map with direct per-zone lighting and brightness controls
 - Local profiles available from the window and menu bar
 - Universal Apple silicon and Intel builds
 
