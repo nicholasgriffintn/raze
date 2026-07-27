@@ -119,6 +119,8 @@ public struct DeviceProfile: Codable, Identifiable, Equatable, Sendable {
     public var target: LightingTarget
     public var effect: LightingEffect
     public var brightness: UInt8
+    public var dpi: Int?
+    public var pollingRate: PollingRate?
 
     public init(
         id: UUID = UUID(),
@@ -126,7 +128,9 @@ public struct DeviceProfile: Codable, Identifiable, Equatable, Sendable {
         productID: UInt16,
         target: LightingTarget,
         effect: LightingEffect,
-        brightness: UInt8
+        brightness: UInt8,
+        dpi: Int? = nil,
+        pollingRate: PollingRate? = nil
     ) {
         self.id = id
         self.name = name
@@ -134,5 +138,7 @@ public struct DeviceProfile: Codable, Identifiable, Equatable, Sendable {
         self.target = target
         self.effect = effect
         self.brightness = brightness
+        self.dpi = dpi
+        self.pollingRate = pollingRate
     }
 }

@@ -10,13 +10,20 @@ struct DeviceDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 DeviceHeader(device: device)
+                StatusBanner(status: model.status)
                 if device.supportsLighting {
                     LightingCard(device: device)
-                    ProfileCard()
+                    if device.controlCapabilities.dpiRange != nil
+                        || !device.controlCapabilities.pollingRates.isEmpty {
+                        DeviceControlCard(device: device)
+                    }
+                    ProfileCard(device: device)
+                    if !model.profiles.isEmpty {
+                        AutomationCard()
+                    }
                 } else {
                     UnsupportedDeviceCard(device: device)
                 }
-                StatusBanner(status: model.status)
             }
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
@@ -161,35 +168,6 @@ private struct LightingCard: View {
     }
 }
 
-private struct ProfileCard: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var profileName = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Save this setup", systemImage: "bookmark")
-                .font(.headline)
-            HStack {
-                TextField("Profile name", text: $profileName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { save() }
-                Button("Save") { save() }
-                    .disabled(profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(18)
-        .controlCard()
-    }
-
-    private func save() {
-        Task {
-            if await model.saveProfile(named: profileName) {
-                profileName = ""
-            }
-        }
-    }
-}
-
 private struct UnsupportedDeviceCard: View {
     let device: RazerDevice
 
@@ -214,15 +192,30 @@ private struct StatusBanner: View {
     let status: AppStatus
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: status.isFailure ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(status.isFailure ? Color.orange : Color.green)
-            Text(status.message)
-                .foregroundStyle(.secondary)
-            Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: status.isFailure ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(status.isFailure ? Color.orange : Color.green)
+                Text(status.message)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            if status.requiresInputMonitoring {
+                Link(
+                    "Open Input Monitoring",
+                    destination: PrivacySettings.inputMonitoringURL
+                )
+                .buttonStyle(.borderedProminent)
+            }
         }
         .font(.callout)
-        .padding(.horizontal, 4)
+        .padding(12)
+        .background(
+            status.requiresInputMonitoring
+                ? Color.orange.opacity(0.09)
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Status: \(status.message)")
     }

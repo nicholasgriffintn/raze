@@ -23,6 +23,12 @@ public enum ReactiveSpeed: UInt8, Codable, Sendable {
     case long = 3
 }
 
+public enum StarlightSpeed: UInt8, Codable, Sendable {
+    case fast = 1
+    case medium = 2
+    case slow = 3
+}
+
 public enum LightingEffectKind: String, Codable, CaseIterable, Sendable {
     case off
     case spectrum
@@ -30,6 +36,9 @@ public enum LightingEffectKind: String, Codable, CaseIterable, Sendable {
     case breathing
     case reactive
     case wave
+    case starlight
+    case ripple
+    case wheel
 }
 
 public enum LightingEffect: Codable, Equatable, Sendable {
@@ -39,6 +48,9 @@ public enum LightingEffect: Codable, Equatable, Sendable {
     case breathing(RGBColor, RGBColor?)
     case reactive(RGBColor, ReactiveSpeed)
     case wave(WaveDirection)
+    case starlight(RGBColor, RGBColor?, StarlightSpeed)
+    case ripple(RGBColor)
+    case wheel
 
     public var kind: LightingEffectKind {
         switch self {
@@ -48,12 +60,19 @@ public enum LightingEffect: Codable, Equatable, Sendable {
         case .breathing: .breathing
         case .reactive: .reactive
         case .wave: .wave
+        case .starlight: .starlight
+        case .ripple: .ripple
+        case .wheel: .wheel
         }
     }
 
     public var primaryColor: RGBColor {
         switch self {
-        case .staticColor(let color), .breathing(let color, _), .reactive(let color, _):
+        case .staticColor(let color),
+             .breathing(let color, _),
+             .reactive(let color, _),
+             .starlight(let color, _, _),
+             .ripple(let color):
             color
         default:
             .init(red: 0, green: 255, blue: 80)
@@ -74,6 +93,12 @@ public enum LightingEffect: Codable, Equatable, Sendable {
             .reactive(primaryColor, .medium)
         case .wave:
             .wave(.left)
+        case .starlight:
+            .starlight(primaryColor, nil, .medium)
+        case .ripple:
+            .ripple(primaryColor)
+        case .wheel:
+            .wheel
         }
     }
 }
@@ -138,6 +163,55 @@ public enum RazerCommands {
         return UInt8((clamped * 255 / 100).rounded())
     }
 
+    public static func customFrameRow(
+        _ colours: [RGBColor],
+        row: UInt8,
+        startColumn: UInt8 = 0,
+        transactionID: UInt8,
+        protocol lightingProtocol: LightingProtocol
+    ) throws -> RazerCommand {
+        guard
+            !colours.isEmpty,
+            colours.count <= 22,
+            Int(startColumn) + colours.count <= 256
+        else {
+            throw RazerProtocolError.invalidArgumentCount(colours.count * 3)
+        }
+        let lastColumn = startColumn + UInt8(colours.count - 1)
+        let rgb = colours.flatMap { [$0.red, $0.green, $0.blue] }
+
+        switch lightingProtocol {
+        case .standardMatrix:
+            var arguments = [UInt8](repeating: 0, count: 0x46)
+            arguments.replaceSubrange(
+                0..<4,
+                with: [0xFF, row, startColumn, lastColumn]
+            )
+            arguments.replaceSubrange(4..<(4 + rgb.count), with: rgb)
+            return try RazerCommand(
+                transactionID: transactionID,
+                commandClass: 0x03,
+                commandID: 0x0B,
+                arguments: arguments
+            )
+        case .extendedMatrix:
+            var arguments = [UInt8](repeating: 0, count: 0x47)
+            arguments.replaceSubrange(2..<5, with: [row, startColumn, lastColumn])
+            arguments.replaceSubrange(5..<(5 + rgb.count), with: rgb)
+            return try RazerCommand(
+                transactionID: transactionID,
+                commandClass: 0x0F,
+                commandID: 0x03,
+                arguments: arguments
+            )
+        case .mouseExtendedMatrix:
+            throw RazerProtocolError.unsupportedEffect(
+                effect: .wheel,
+                lightingProtocol: lightingProtocol
+            )
+        }
+    }
+
     private static func encode(
         _ effect: LightingEffect,
         target: LightingTarget,
@@ -179,6 +253,21 @@ public enum RazerCommands {
             return [0x04]
         case .staticColor(let color):
             return [0x06, color.red, color.green, color.blue]
+        case .starlight(let first, let second, let speed):
+            if let second {
+                return [
+                    0x19, 0x02, speed.rawValue,
+                    first.red, first.green, first.blue,
+                    second.red, second.green, second.blue
+                ]
+            }
+            return [
+                0x19, 0x01, speed.rawValue,
+                first.red, first.green, first.blue,
+                0x00, 0x00, 0x00
+            ]
+        case .ripple, .wheel:
+            return [0x05, 0x01]
         }
     }
 
@@ -208,6 +297,20 @@ public enum RazerCommands {
             return prefix + [0x04, direction.rawValue, 0x28, 0x00]
         case .reactive(let color, let speed):
             return prefix + [0x05, 0x00, speed.rawValue, 0x01, color.red, color.green, color.blue]
+        case .starlight(let first, let second, let speed):
+            if let second {
+                return prefix + [
+                    0x07, 0x00, speed.rawValue, 0x02,
+                    first.red, first.green, first.blue,
+                    second.red, second.green, second.blue
+                ]
+            }
+            return prefix + [
+                0x07, 0x00, speed.rawValue, 0x01,
+                first.red, first.green, first.blue
+            ]
+        case .ripple, .wheel:
+            return [0x00, 0x00, 0x08] + [UInt8](repeating: 0, count: 9)
         }
     }
 
@@ -220,9 +323,9 @@ public enum RazerCommands {
         switch effect {
         case .off:
             return prefix + [0x00]
-        case .wave:
+        case .wave, .starlight, .ripple, .wheel:
             throw RazerProtocolError.unsupportedEffect(
-                effect: .wave,
+                effect: effect.kind,
                 lightingProtocol: .mouseExtendedMatrix
             )
         case .reactive(let color, let speed):

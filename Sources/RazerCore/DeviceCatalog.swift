@@ -301,6 +301,14 @@ private extension DeviceDefinition {
         var supportedEffects = explicitSupportedEffects ?? Set(LightingEffectKind.allCases)
         if lightingProtocol == .mouseExtendedMatrix {
             supportedEffects.remove(.wave)
+            supportedEffects.remove(.starlight)
+        }
+        if kind == .mouse {
+            supportedEffects.remove(.starlight)
+        }
+        if kind != .keyboard && kind != .laptop {
+            supportedEffects.remove(.ripple)
+            supportedEffects.remove(.wheel)
         }
 
         return .init(

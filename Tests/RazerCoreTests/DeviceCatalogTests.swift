@@ -34,6 +34,27 @@ final class DeviceCatalogTests: XCTestCase {
             [.off, .spectrum, .staticColor, .breathing, .reactive]
         )
         XCTAssertTrue(definition.supportsBrightness)
+        let device = device(
+            protocol: definition.lightingProtocol,
+            targets: definition.targets,
+            productID: definition.productID,
+            kind: definition.kind
+        )
+        XCTAssertEqual(device.controlCapabilities.dpiRange, 100...16_000)
+        XCTAssertEqual(device.controlCapabilities.pollingRates, PollingRate.allCases)
+    }
+
+    func testBasiliskXHyperSpeedAdvertisesBatteryStatus() throws {
+        let definition = try XCTUnwrap(DeviceCatalog().definition(for: 0x0083))
+        let device = device(
+            protocol: definition.lightingProtocol,
+            targets: definition.targets,
+            productID: definition.productID,
+            kind: definition.kind,
+            productName: definition.name
+        )
+
+        XCTAssertTrue(device.controlCapabilities.supportsBattery)
     }
 
     func testUnmappedProtocolsRemainDetectionOnly() {
@@ -135,14 +156,17 @@ final class DeviceCatalogTests: XCTestCase {
 
     private func device(
         protocol lightingProtocol: LightingProtocol?,
-        targets: [LightingTarget]
+        targets: [LightingTarget],
+        productID: UInt16 = 0xFFFF,
+        kind: DeviceKind = .unknown,
+        productName: String = "Fixture"
     ) -> RazerDevice {
         .init(
             id: "fixture",
-            productID: 0xFFFF,
-            productName: "Fixture",
+            productID: productID,
+            productName: productName,
             serialNumber: nil,
-            kind: .unknown,
+            kind: kind,
             transactionID: 0x1F,
             lightingProtocol: lightingProtocol,
             supportLevel: .community,

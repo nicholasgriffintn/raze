@@ -3,6 +3,12 @@ import AppKit
 import RazerCore
 import SwiftUI
 
+enum PrivacySettings {
+    static let inputMonitoringURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+    )!
+}
+
 extension DeviceKind {
     var systemImage: String {
         switch self {
@@ -46,16 +52,67 @@ extension LightingEffectKind {
         case .breathing: "Breathing"
         case .reactive: "Reactive"
         case .wave: "Wave"
+        case .starlight: "Starlight"
+        case .ripple: "Ripple"
+        case .wheel: "Colour wheel"
         }
     }
 
     var usesColour: Bool {
         switch self {
-        case .staticColor, .breathing, .reactive:
+        case .staticColor, .breathing, .reactive, .starlight, .ripple:
             true
-        case .off, .spectrum, .wave:
+        case .off, .spectrum, .wave, .wheel:
             false
         }
+    }
+}
+
+extension AutomationEvent {
+    var displayName: String {
+        switch self {
+        case .appLaunch: "App launch"
+        case .wake: "Wake"
+        case .sleep: "Sleep"
+        case .acPower: "Connected to power"
+        case .batteryPower: "Using battery"
+        case .screenLock: "Screen locked"
+        case .screenUnlock: "Screen unlocked"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .appLaunch: "power"
+        case .wake: "sunrise"
+        case .sleep: "moon.zzz"
+        case .acPower: "powerplug"
+        case .batteryPower: "battery.75percent"
+        case .screenLock: "lock"
+        case .screenUnlock: "lock.open"
+        }
+    }
+}
+
+extension DeviceProfile {
+    var deviceDisplayName: String {
+        DeviceCatalog().definition(for: productID)?.name
+            ?? String(format: "Razer %04X", productID)
+    }
+
+    var settingsSummary: String {
+        var parts = [
+            effect.kind.displayName,
+            target.displayName,
+            "\(brightness)%"
+        ]
+        if let dpi {
+            parts.append("\(dpi) DPI")
+        }
+        if let pollingRate {
+            parts.append("\(pollingRate.rawValue) Hz")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

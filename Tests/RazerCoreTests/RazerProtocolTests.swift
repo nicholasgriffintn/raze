@@ -19,6 +19,14 @@ final class RazerProtocolTests: XCTestCase {
             effect.changingKind(to: LightingEffectKind.wave),
             LightingEffect.wave(.left)
         )
+        XCTAssertEqual(
+            effect.changingKind(to: LightingEffectKind.starlight),
+            LightingEffect.starlight(colour, nil, .medium)
+        )
+        XCTAssertEqual(
+            effect.changingKind(to: LightingEffectKind.ripple),
+            LightingEffect.ripple(colour)
+        )
     }
 
     func testCommandLayoutAndChecksum() throws {
@@ -99,6 +107,119 @@ final class RazerProtocolTests: XCTestCase {
                 )
             )
         }
+    }
+
+    func testStarlightUsesProtocolSpecificPayloads() throws {
+        let first = RazerCore.RGBColor(red: 1, green: 2, blue: 3)
+        let second = RazerCore.RGBColor(red: 4, green: 5, blue: 6)
+        let standard = try RazerCommands.lighting(
+            .starlight(first, second, .slow),
+            target: .backlight,
+            transactionID: 0x3F,
+            protocol: .standardMatrix
+        )
+        let extended = try RazerCommands.lighting(
+            .starlight(first, nil, .fast),
+            target: .backlight,
+            transactionID: 0x1F,
+            protocol: .extendedMatrix
+        )
+
+        XCTAssertEqual(
+            standard.arguments,
+            [0x19, 0x02, 0x03, 1, 2, 3, 4, 5, 6]
+        )
+        XCTAssertEqual(
+            extended.arguments,
+            [0x01, 0x05, 0x07, 0x00, 0x01, 0x01, 1, 2, 3]
+        )
+    }
+
+    func testAnimatedEffectsEnterCustomModeAndEncodeMatrixRows() throws {
+        let colour = RazerCore.RGBColor(red: 0x12, green: 0x34, blue: 0x56)
+        let standardMode = try RazerCommands.lighting(
+            .ripple(colour),
+            target: .backlight,
+            transactionID: 0xFF,
+            protocol: .standardMatrix
+        )
+        let extendedMode = try RazerCommands.lighting(
+            .wheel,
+            target: .backlight,
+            transactionID: 0x3F,
+            protocol: .extendedMatrix
+        )
+        let standardRow = try RazerCommands.customFrameRow(
+            [colour],
+            row: 2,
+            startColumn: 3,
+            transactionID: 0xFF,
+            protocol: .standardMatrix
+        )
+        let extendedRow = try RazerCommands.customFrameRow(
+            [colour],
+            row: 2,
+            startColumn: 3,
+            transactionID: 0x3F,
+            protocol: .extendedMatrix
+        )
+
+        XCTAssertEqual(standardMode.arguments, [0x05, 0x01])
+        XCTAssertEqual(extendedMode.arguments, [UInt8](repeating: 0, count: 2) + [0x08] + [UInt8](repeating: 0, count: 9))
+        XCTAssertEqual([standardRow.commandClass, standardRow.commandID], [0x03, 0x0B])
+        XCTAssertEqual(standardRow.arguments.count, 0x46)
+        XCTAssertEqual(Array(standardRow.arguments.prefix(7)), [0xFF, 0x02, 0x03, 0x03, 0x12, 0x34, 0x56])
+        XCTAssertEqual([extendedRow.commandClass, extendedRow.commandID], [0x0F, 0x03])
+        XCTAssertEqual(extendedRow.arguments.count, 0x47)
+        XCTAssertEqual(Array(extendedRow.arguments.prefix(8)), [0x00, 0x00, 0x02, 0x03, 0x03, 0x12, 0x34, 0x56])
+    }
+
+    func testMouseExtendedProtocolRejectsStarlight() {
+        XCTAssertThrowsError(
+            try RazerCommands.lighting(
+                .starlight(.init(red: 1, green: 2, blue: 3), nil, .medium),
+                target: .logo,
+                transactionID: 0x3F,
+                protocol: .mouseExtendedMatrix
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? RazerProtocolError,
+                .unsupportedEffect(
+                    effect: .starlight,
+                    lightingProtocol: .mouseExtendedMatrix
+                )
+            )
+        }
+    }
+
+    func testMousePerformanceAndPowerCommandsMatchProtocolFixtures() throws {
+        let dpi = try RazerCommands.setDPI(16_000, transactionID: 0x3F)
+        let polling = try RazerCommands.setPollingRate(.hz1000, transactionID: 0x3F)
+        let battery = try RazerCommands.getBatteryLevel(transactionID: 0x1F)
+        let charging = try RazerCommands.getChargingStatus(transactionID: 0x1F)
+
+        XCTAssertEqual([dpi.commandClass, dpi.commandID], [0x04, 0x05])
+        XCTAssertEqual(dpi.arguments, [0x01, 0x3E, 0x80, 0x3E, 0x80, 0, 0])
+        XCTAssertEqual([polling.commandClass, polling.commandID], [0x00, 0x05])
+        XCTAssertEqual(polling.arguments, [0x01])
+        XCTAssertEqual([battery.commandClass, battery.commandID], [0x07, 0x80])
+        XCTAssertEqual([charging.commandClass, charging.commandID], [0x07, 0x84])
+    }
+
+    func testMousePerformanceAndPowerResponsesDecode() {
+        let dpi = RazerResponse(
+            status: .successful,
+            arguments: [0x01, 0x3E, 0x80, 0x3E, 0x80, 0, 0]
+        )
+        let polling = RazerResponse(status: .successful, arguments: [0x02])
+        let battery = RazerResponse(status: .successful, arguments: [0, 128])
+        let charging = RazerResponse(status: .successful, arguments: [0, 1])
+
+        XCTAssertEqual(DeviceResponseDecoder.dpi(from: dpi), 16_000)
+        XCTAssertEqual(DeviceResponseDecoder.pollingRate(from: polling), .hz500)
+        XCTAssertEqual(DeviceResponseDecoder.batteryPercentage(from: battery), 50)
+        XCTAssertEqual(DeviceResponseDecoder.isCharging(from: charging), true)
     }
 
     func testProtocolVariantsEncodeEffectSpecificPayloads() throws {

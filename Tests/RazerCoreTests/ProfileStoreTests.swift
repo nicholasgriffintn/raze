@@ -23,7 +23,9 @@ final class ProfileStoreTests: XCTestCase {
                 productID: 0x0226,
                 target: .backlight,
                 effect: .staticColor(.init(red: 10, green: 20, blue: 30)),
-                brightness: 75
+                brightness: 75,
+                dpi: 1_600,
+                pollingRate: .hz1000
             )
         ]
 

@@ -168,7 +168,7 @@ private struct DeviceSchematic: View {
             width: rect.width * 0.34,
             height: rect.height * 0.90
         )
-        let body = Path(roundedRect: shell, cornerRadius: shell.width / 2)
+        let body = Path(ellipseIn: shell)
         context.fill(body, with: muted)
         context.stroke(body, with: line, lineWidth: 2)
 

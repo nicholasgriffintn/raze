@@ -20,9 +20,11 @@ Raze requires macOS 13 or later.
 ## Features
 
 - Automatic discovery and refresh
-- Static, spectrum, breathing, reactive, wave, and off effects where supported
+- Static, spectrum, breathing, reactive, starlight, ripple, colour-wheel, wave,
+  and off effects where supported
 - Interactive device map with direct per-zone lighting and brightness controls
-- Local profiles available from the window and menu bar
+- Mouse DPI, polling rate, and battery status where supported
+- Local profiles, including automatic launch, power, sleep, and lock events
 - Universal Apple silicon and Intel builds
 
 Profiles are stored at:
@@ -31,7 +33,7 @@ Profiles are stored at:
 ~/Library/Application Support/Raze/profiles-v1.json
 ```
 
-Raze does not currently manage DPI, key bindings, macros, or firmware.
+Raze does not manage key bindings, macros, or firmware.
 
 ## Device support
 
@@ -52,6 +54,8 @@ To add or correct support, follow the hardware-evidence process in
 
 - Reconnect the device and press **Command-R**.
 - Enable Raze under **System Settings → Privacy & Security → Input Monitoring**.
+- If Raze is already listed after an update, remove it from Input Monitoring,
+  add the current `/Applications/Raze.app`, and enable it again.
 - Quit and reopen Raze after changing permission.
 - Quit other device-control software that may have opened the same HID
   interface.

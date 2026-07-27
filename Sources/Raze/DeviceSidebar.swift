@@ -35,31 +35,6 @@ struct DeviceSidebar: View {
                 }
             }
 
-            Section("Profiles") {
-                if model.profiles.isEmpty {
-                    Text("No saved profiles")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(model.profiles) { profile in
-                    Button {
-                        Task { await model.apply(profile) }
-                    } label: {
-                        Label(profile.name, systemImage: "slider.horizontal.3")
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) {
-                            guard let index = model.profiles.firstIndex(where: { $0.id == profile.id }) else {
-                                return
-                            }
-                            Task { await model.deleteProfiles(at: IndexSet(integer: index)) }
-                        }
-                    }
-                }
-                .onDelete { offsets in
-                    Task { await model.deleteProfiles(at: offsets) }
-                }
-            }
         }
         .listStyle(.sidebar)
         .navigationTitle("Raze")

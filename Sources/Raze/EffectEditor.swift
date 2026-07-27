@@ -34,6 +34,12 @@ struct EffectEditor: View {
                     Text("Left").tag(WaveDirection.left)
                     Text("Right").tag(WaveDirection.right)
                 }
+            case .starlight:
+                Picker("Speed", selection: starlightSpeed) {
+                    Text("Fast").tag(StarlightSpeed.fast)
+                    Text("Medium").tag(StarlightSpeed.medium)
+                    Text("Slow").tag(StarlightSpeed.slow)
+                }
             default:
                 EmptyView()
             }
@@ -61,6 +67,10 @@ struct EffectEditor: View {
                     effect = .breathing(colour, second)
                 case .reactive(_, let speed):
                     effect = .reactive(colour, speed)
+                case .starlight(_, let second, let speed):
+                    effect = .starlight(colour, second, speed)
+                case .ripple:
+                    effect = .ripple(colour)
                 default:
                     break
                 }
@@ -91,6 +101,18 @@ struct EffectEditor: View {
                 return .left
             },
             set: { effect = .wave($0) }
+        )
+    }
+
+    private var starlightSpeed: Binding<StarlightSpeed> {
+        Binding(
+            get: {
+                if case .starlight(_, _, let speed) = effect {
+                    return speed
+                }
+                return .medium
+            },
+            set: { effect = .starlight(effect.primaryColor, nil, $0) }
         )
     }
 }

@@ -2,6 +2,7 @@
 import Foundation
 import IOKit
 import IOKit.hid
+import IOKit.hidsystem
 import RazerCore
 
 enum HIDError: LocalizedError {
@@ -11,6 +12,15 @@ enum HIDError: LocalizedError {
     case read(IOReturn)
     case unknownDevice
     case noControlInterface
+
+    var requiresInputMonitoring: Bool {
+        switch self {
+        case .managerOpen(let code), .open(let code), .write(let code), .read(let code):
+            code == kIOReturnNotPermitted
+        case .unknownDevice, .noControlInterface:
+            false
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +58,17 @@ actor HIDTransport {
             manager,
             [kIOHIDVendorIDKey: NSNumber(value: DeviceCatalog.vendorID)] as CFDictionary
         )
+    }
+
+    func requestInputMonitoringAccess() -> Bool {
+        switch IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) {
+        case kIOHIDAccessTypeGranted:
+            true
+        case kIOHIDAccessTypeUnknown:
+            IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        default:
+            false
+        }
     }
 
     func scan() throws -> [RazerDevice] {
@@ -118,7 +139,7 @@ actor HIDTransport {
     }
 
     func send(_ command: RazerCommand, to device: RazerDevice) throws -> RazerResponse? {
-        guard device.supportsLighting else {
+        guard device.supportLevel == .community else {
             throw HIDError.unknownDevice
         }
         guard let handle = handles[device.id] else {

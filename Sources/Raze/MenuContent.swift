@@ -10,12 +10,15 @@ struct MenuContent: View {
         if model.profiles.isEmpty {
             Text("No saved profiles")
         } else {
-            ForEach(model.profiles) { profile in
-                Button(profile.name) {
-                    Task { await model.apply(profile) }
+            Menu("Apply profile") {
+                ForEach(model.profiles) { profile in
+                    Button("\(profile.name) — \(profile.deviceDisplayName)") {
+                        Task { await model.apply(profile) }
+                    }
                 }
             }
         }
+        Text(model.status.message)
         Divider()
         Button("Open Raze") {
             openWindow(id: "main")

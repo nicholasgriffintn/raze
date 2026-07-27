@@ -7,6 +7,7 @@ enum AppStatus: Equatable {
     case scanning
     case noDevices
     case ready
+    case inputMonitoringRequired
     case unsupported(String)
     case applying(String)
     case success(String)
@@ -22,6 +23,8 @@ enum AppStatus: Equatable {
             "No Razer devices found. Connect a device by USB, then refresh."
         case .ready:
             "Ready."
+        case .inputMonitoringRequired:
+            "Input Monitoring is off. Enable Raze in System Settings, then quit and reopen it."
         case .unsupported(let name):
             "\(name) is recognised, but its lighting protocol is not yet mapped."
         case .applying(let name):
@@ -33,11 +36,15 @@ enum AppStatus: Equatable {
 
     var isFailure: Bool {
         switch self {
-        case .failure, .unsupported:
+        case .failure, .inputMonitoringRequired, .unsupported:
             true
         default:
             false
         }
+    }
+
+    var requiresInputMonitoring: Bool {
+        self == .inputMonitoringRequired
     }
 }
 
@@ -50,13 +57,28 @@ final class AppModel: ObservableObject {
         .init(red: 0, green: 255, blue: 80)
     )
     @Published var brightness: Double = 100
+    @Published var dpi: Double = 800
+    @Published var pollingRate: PollingRate = .hz1000
+    @Published private(set) var powerStatus: DevicePowerStatus?
     @Published private(set) var profiles: [DeviceProfile] = []
+    @Published private(set) var activeProfileID: UUID?
+    @Published private(set) var automationAssignments: [AutomationEvent: UUID] = [:]
     @Published private(set) var status: AppStatus = .loading
 
     private let transport: HIDTransport
     private let profileStore: ProfileStore
+    private let automationStore: AutomationStore
     private var discoveryTask: Task<Void, Never>?
     private var isRefreshing = false
+    private var ignoredSelectionChangeID: String?
+    private lazy var lightingAnimation = LightingAnimationController(
+        transport: transport
+    ) { [weak self] message in
+        self?.status = .failure(message)
+    }
+    private lazy var eventMonitor = SystemEventMonitor { [weak self] event in
+        Task { await self?.handleAutomationEvent(event) }
+    }
 
     init() {
         transport = HIDTransport()
@@ -67,14 +89,24 @@ final class AppModel: ObservableObject {
         profileStore = ProfileStore(
             fileURL: appSupport.appendingPathComponent("Raze/profiles-v1.json")
         )
+        automationStore = AutomationStore(
+            fileURL: appSupport.appendingPathComponent("Raze/automation-v1.json")
+        )
 
         Task {
+            let hasInputMonitoringAccess = await transport.requestInputMonitoringAccess()
             let profileLoadError = await loadProfiles()
+            let automationLoadError = await loadAutomation()
             await refresh()
-            if let profileLoadError {
-                status = .failure(profileLoadError)
+            await refreshDeviceControls()
+            if !hasInputMonitoringAccess {
+                status = .inputMonitoringRequired
+            } else if let loadError = profileLoadError ?? automationLoadError {
+                status = .failure(loadError)
             }
             startAutomaticDiscovery()
+            eventMonitor.start()
+            await handleAutomationEvent(.appLaunch)
         }
     }
 
@@ -94,7 +126,14 @@ final class AppModel: ObservableObject {
     }
 
     func selectionChanged() {
+        if ignoredSelectionChangeID == selectedDeviceID {
+            ignoredSelectionChangeID = nil
+            return
+        }
+        activeProfileID = nil
+        lightingAnimation.stop()
         reconcileSelection(resetTargetIfNeeded: true)
+        Task { await refreshDeviceControls() }
     }
 
     func refresh(silent: Bool = false) async {
@@ -108,17 +147,33 @@ final class AppModel: ObservableObject {
         defer { isRefreshing = false }
 
         do {
+            let previousSelectionID = selectedDeviceID
             devices = try await transport.scan()
-            reconcileSelection(resetTargetIfNeeded: false)
+            let previousSelectionStillExists = devices.contains {
+                $0.id == previousSelectionID
+            }
+            reconcileSelection(
+                resetTargetIfNeeded: false,
+                updateStatus: !silent || !previousSelectionStillExists
+            )
+            if silent,
+               let selectedDevice,
+               selectedDevice.controlCapabilities.supportsBattery {
+                await refreshPowerStatus(for: selectedDevice)
+            }
         } catch {
-            status = .failure(error.localizedDescription)
+            setOperationFailure(error)
         }
     }
 
     func apply() async {
+        activeProfileID = nil
+        await applyLighting()
+    }
+
+    private func applyLighting() async {
         guard
             let device = selectedDevice,
-            let lightingProtocol = device.lightingProtocol,
             device.targets.contains(target),
             device.supportedEffects.contains(effect.kind)
         else {
@@ -128,25 +183,84 @@ final class AppModel: ObservableObject {
 
         status = .applying(device.productName)
         do {
-            if device.supportsBrightness {
-                let brightnessCommand = try RazerCommands.brightness(
-                    RazerCommands.brightnessByte(fromPercentage: brightness),
-                    target: target,
-                    transactionID: device.transactionID,
-                    protocol: lightingProtocol
-                )
-                _ = try await transport.send(brightnessCommand, to: device)
-            }
-            let effectCommand = try RazerCommands.lighting(
-                effect,
+            try await sendLighting(
+                effect: effect,
                 target: target,
-                transactionID: device.transactionID,
-                protocol: lightingProtocol
+                brightness: brightness,
+                to: device
             )
-            _ = try await transport.send(effectCommand, to: device)
             status = .success("Applied to \(device.productName).")
         } catch {
-            status = .failure(error.localizedDescription)
+            setOperationFailure(error)
+        }
+    }
+
+    func applyDeviceControls() async {
+        activeProfileID = nil
+        await applyPerformanceControls()
+    }
+
+    private func applyPerformanceControls() async {
+        guard let device = selectedDevice else {
+            status = .failure("Select a connected device.")
+            return
+        }
+        let capabilities = device.controlCapabilities
+        guard capabilities.dpiRange != nil || !capabilities.pollingRates.isEmpty else {
+            status = .failure("Performance controls are unavailable for this device.")
+            return
+        }
+
+        status = .applying(device.productName)
+        do {
+            try await sendPerformance(
+                dpi: Int(dpi.rounded()),
+                pollingRate: pollingRate,
+                to: device
+            )
+            status = .success("Applied performance settings to \(device.productName).")
+        } catch {
+            setOperationFailure(error)
+        }
+    }
+
+    func refreshDeviceControls() async {
+        guard let device = selectedDevice else {
+            powerStatus = nil
+            return
+        }
+        let capabilities = device.controlCapabilities
+
+        if capabilities.dpiRange != nil {
+            do {
+                if let response = try await transport.send(
+                    RazerCommands.getDPI(transactionID: device.transactionID),
+                    to: device
+                ),
+                   let currentDPI = DeviceResponseDecoder.dpi(from: response) {
+                    dpi = Double(currentDPI)
+                }
+            } catch {
+                setPermissionFailureIfNeeded(error)
+            }
+        }
+        if !capabilities.pollingRates.isEmpty {
+            do {
+                if let response = try await transport.send(
+                    RazerCommands.getPollingRate(transactionID: device.transactionID),
+                    to: device
+                ),
+                   let currentRate = DeviceResponseDecoder.pollingRate(from: response) {
+                    pollingRate = currentRate
+                }
+            } catch {
+                setPermissionFailureIfNeeded(error)
+            }
+        }
+        if capabilities.supportsBattery {
+            await refreshPowerStatus(for: device)
+        } else {
+            powerStatus = nil
         }
     }
 
@@ -170,7 +284,11 @@ final class AppModel: ObservableObject {
                 productID: device.productID,
                 target: target,
                 effect: effect,
-                brightness: UInt8(clamping: Int(brightness.rounded()))
+                brightness: UInt8(clamping: Int(brightness.rounded())),
+                dpi: device.controlCapabilities.dpiRange == nil ? nil : Int(dpi.rounded()),
+                pollingRate: device.controlCapabilities.pollingRates.isEmpty
+                    ? nil
+                    : pollingRate
             )
         )
         do {
@@ -211,24 +329,159 @@ final class AppModel: ObservableObject {
             return
         }
 
-        selectedDeviceID = destination.id
+        if selectedDeviceID != destination.id {
+            ignoredSelectionChangeID = destination.id
+            selectedDeviceID = destination.id
+        }
         target = profile.target
         effect = profile.effect
         brightness = Double(profile.brightness)
-        await apply()
+
+        if let profileDPI = profile.dpi {
+            dpi = Double(profileDPI)
+        }
+        if let profilePollingRate = profile.pollingRate {
+            pollingRate = profilePollingRate
+        }
+
+        status = .applying(destination.productName)
+        do {
+            try await sendLighting(
+                effect: profile.effect,
+                target: profile.target,
+                brightness: Double(profile.brightness),
+                to: destination
+            )
+            if profile.dpi != nil || profile.pollingRate != nil {
+                try await sendPerformance(
+                    dpi: profile.dpi,
+                    pollingRate: profile.pollingRate,
+                    to: destination
+                )
+            }
+            activeProfileID = profile.id
+            status = .success("Applied profile “\(profile.name)”.")
+        } catch {
+            activeProfileID = nil
+            setOperationFailure(
+                error,
+                message: "Could not apply profile “\(profile.name)”: \(error.localizedDescription)"
+            )
+        }
     }
 
-    func deleteProfiles(at offsets: IndexSet) async {
-        let originalProfiles = profiles
-        for index in offsets.sorted(by: >) where profiles.indices.contains(index) {
-            profiles.remove(at: index)
+    private func sendLighting(
+        effect: LightingEffect,
+        target: LightingTarget,
+        brightness: Double,
+        to device: RazerDevice
+    ) async throws {
+        guard let lightingProtocol = device.lightingProtocol else {
+            throw HIDError.unknownDevice
         }
+
+        lightingAnimation.stop()
+        if device.supportsBrightness {
+            let brightnessCommand = try RazerCommands.brightness(
+                RazerCommands.brightnessByte(fromPercentage: brightness),
+                target: target,
+                transactionID: device.transactionID,
+                protocol: lightingProtocol
+            )
+            _ = try await transport.send(brightnessCommand, to: device)
+        }
+        switch effect {
+        case .ripple, .wheel:
+            try await lightingAnimation.start(
+                effect: effect,
+                target: target,
+                on: device
+            )
+        default:
+            let effectCommand = try RazerCommands.lighting(
+                effect,
+                target: target,
+                transactionID: device.transactionID,
+                protocol: lightingProtocol
+            )
+            _ = try await transport.send(effectCommand, to: device)
+        }
+    }
+
+    private func sendPerformance(
+        dpi requestedDPI: Int?,
+        pollingRate requestedPollingRate: PollingRate?,
+        to device: RazerDevice
+    ) async throws {
+        let capabilities = device.controlCapabilities
+        if let requestedDPI, let dpiRange = capabilities.dpiRange {
+            let selectedDPI = min(max(requestedDPI, dpiRange.lowerBound), dpiRange.upperBound)
+            _ = try await transport.send(
+                RazerCommands.setDPI(selectedDPI, transactionID: device.transactionID),
+                to: device
+            )
+            dpi = Double(selectedDPI)
+        }
+        if let requestedPollingRate,
+           capabilities.pollingRates.contains(requestedPollingRate) {
+            _ = try await transport.send(
+                RazerCommands.setPollingRate(
+                    requestedPollingRate,
+                    transactionID: device.transactionID
+                ),
+                to: device
+            )
+            pollingRate = requestedPollingRate
+        }
+    }
+
+    func deleteProfile(id: UUID) async {
+        let originalProfiles = profiles
+        let originalAssignments = automationAssignments
+        guard profiles.contains(where: { $0.id == id }) else {
+            return
+        }
+        profiles.removeAll { $0.id == id }
         do {
             try await profileStore.save(profiles)
+            let profileIDs = Set(profiles.map(\.id))
+            automationAssignments = automationAssignments.filter {
+                profileIDs.contains($0.value)
+            }
+            try await automationStore.save(automationAssignments)
+            if activeProfileID == id {
+                activeProfileID = nil
+            }
             status = .success("Profile removed.")
         } catch {
             profiles = originalProfiles
+            automationAssignments = originalAssignments
+            try? await profileStore.save(originalProfiles)
+            try? await automationStore.save(originalAssignments)
             status = .failure("Could not update profiles: \(error.localizedDescription)")
+        }
+    }
+
+    func setAutomation(_ event: AutomationEvent, profileID: UUID?) async {
+        let originalAssignments = automationAssignments
+        if let profileID {
+            guard profiles.contains(where: { $0.id == profileID }) else {
+                status = .failure("That profile no longer exists.")
+                return
+            }
+            automationAssignments[event] = profileID
+        } else {
+            automationAssignments.removeValue(forKey: event)
+        }
+
+        do {
+            try await automationStore.save(automationAssignments)
+            status = .success("Updated automatic profiles.")
+        } catch {
+            automationAssignments = originalAssignments
+            status = .failure(
+                "Could not save automatic profiles: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -241,8 +494,32 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func reconcileSelection(resetTargetIfNeeded: Bool) {
+    private func loadAutomation() async -> String? {
+        do {
+            automationAssignments = try await automationStore.load()
+            return nil
+        } catch {
+            return "Could not load automatic profiles: \(error.localizedDescription)"
+        }
+    }
+
+    private func handleAutomationEvent(_ event: AutomationEvent) async {
+        guard
+            !isWorking,
+            let profileID = automationAssignments[event],
+            let profile = profiles.first(where: { $0.id == profileID })
+        else {
+            return
+        }
+        await apply(profile)
+    }
+
+    private func reconcileSelection(
+        resetTargetIfNeeded: Bool,
+        updateStatus: Bool = true
+    ) {
         if !devices.contains(where: { $0.id == selectedDeviceID }) {
+            lightingAnimation.stop()
             selectedDeviceID = devices.first?.id
         }
         guard let device = selectedDevice else {
@@ -258,9 +535,61 @@ final class AppModel: ObservableObject {
            ) {
             effect = effect.changingKind(to: supportedKind)
         }
-        status = device.supportsLighting
-            ? .ready
-            : .unsupported(device.productName)
+        if updateStatus {
+            status = device.supportsLighting
+                ? .ready
+                : .unsupported(device.productName)
+        }
+    }
+
+    private func refreshPowerStatus(for device: RazerDevice) async {
+        let batteryResponse: RazerResponse?
+        do {
+            batteryResponse = try await transport.send(
+                RazerCommands.getBatteryLevel(transactionID: device.transactionID),
+                to: device
+            )
+        } catch {
+            powerStatus = nil
+            setPermissionFailureIfNeeded(error)
+            return
+        }
+        guard let percentage = batteryResponse.flatMap(
+            DeviceResponseDecoder.batteryPercentage(from:)
+        ) else {
+            powerStatus = nil
+            return
+        }
+
+        let chargingResponse: RazerResponse?
+        do {
+            chargingResponse = try await transport.send(
+                RazerCommands.getChargingStatus(transactionID: device.transactionID),
+                to: device
+            )
+        } catch {
+            setPermissionFailureIfNeeded(error)
+            chargingResponse = nil
+        }
+        let isCharging = chargingResponse.flatMap(
+            DeviceResponseDecoder.isCharging(from:)
+        ) ?? false
+        powerStatus = .init(percentage: percentage, isCharging: isCharging)
+    }
+
+    private func setOperationFailure(_ error: Error, message: String? = nil) {
+        if let hidError = error as? HIDError, hidError.requiresInputMonitoring {
+            status = .inputMonitoringRequired
+        } else {
+            status = .failure(message ?? error.localizedDescription)
+        }
+    }
+
+    private func setPermissionFailureIfNeeded(_ error: Error) {
+        guard let hidError = error as? HIDError, hidError.requiresInputMonitoring else {
+            return
+        }
+        status = .inputMonitoringRequired
     }
 
     private func startAutomaticDiscovery() {
