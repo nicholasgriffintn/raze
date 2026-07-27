@@ -17,6 +17,10 @@ struct RazeApp: App {
             MenuContent()
                 .environmentObject(model)
         }
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 #endif

@@ -3,11 +3,38 @@ import XCTest
 
 final class DeviceCatalogTests: XCTestCase {
     func testCatalogRecognisesBroadDeviceSet() {
-        XCTAssertEqual(DeviceCatalog.builtIns.count, 257)
+        XCTAssertEqual(DeviceCatalog.builtIns.count, 271)
         XCTAssertEqual(
             Set(DeviceCatalog.builtIns.map(\.productID)).count,
             DeviceCatalog.builtIns.count
         )
+    }
+
+    func testRecentDevicesFromComparisonCatalogRemainDetectionOnly() throws {
+        let expectedDevices: [UInt16: String] = [
+            0x00A4: "Razer Mouse Dock Pro",
+            0x00BE: "Razer DeathAdder V4 Pro (Wired)",
+            0x00BF: "Razer DeathAdder V4 Pro (Wireless)",
+            0x00D3: "Razer Basilisk Mobile (Wired)",
+            0x00D4: "Razer Basilisk Mobile (Receiver)",
+            0x02B0: "Razer Huntsman V3 Pro Mini",
+            0x02C5: "Razer Blade 14 (2025)",
+            0x02C6: "Razer Blade 16 (2025)",
+            0x02C7: "Razer Blade 18 (2025)",
+            0x02CF: "Razer Huntsman V3 Pro 8KHz",
+            0x02D5: "Razer BlackWidow V4 Tenkeyless HyperSpeed (Wireless)",
+            0x02D7: "Razer BlackWidow V4 Tenkeyless HyperSpeed (Wired)",
+            0x0520: "Razer Kraken Tournament Edition",
+            0x0F13: "Razer Lian Li O11 Dynamic"
+        ]
+        let catalog = DeviceCatalog()
+
+        for (productID, name) in expectedDevices {
+            let definition = try XCTUnwrap(catalog.definition(for: productID))
+
+            XCTAssertEqual(definition.name, name)
+            XCTAssertEqual(definition.supportLevel, .detectionOnly)
+        }
     }
 
     func testCorrectedProductMappings() {
@@ -55,6 +82,23 @@ final class DeviceCatalogTests: XCTestCase {
         )
 
         XCTAssertTrue(device.controlCapabilities.supportsBattery)
+    }
+
+    func testNewerMouseCapabilitiesUseObservedDPIAndPollingOptions() throws {
+        let definition = try XCTUnwrap(DeviceCatalog().definition(for: 0x00B7))
+        let device = device(
+            protocol: definition.lightingProtocol,
+            targets: definition.targets,
+            productID: definition.productID,
+            kind: definition.kind,
+            productName: definition.name
+        )
+
+        XCTAssertEqual(device.controlCapabilities.dpiRange, 100...35_000)
+        XCTAssertEqual(
+            device.controlCapabilities.pollingRates,
+            [.hz125, .hz250, .hz500, .hz1000]
+        )
     }
 
     func testUnmappedProtocolsRemainDetectionOnly() {

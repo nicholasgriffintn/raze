@@ -195,14 +195,16 @@ final class RazerProtocolTests: XCTestCase {
 
     func testMousePerformanceAndPowerCommandsMatchProtocolFixtures() throws {
         let dpi = try RazerCommands.setDPI(16_000, transactionID: 0x3F)
-        let polling = try RazerCommands.setPollingRate(.hz1000, transactionID: 0x3F)
+        let highDPI = try RazerCommands.setDPI(35_000, transactionID: 0x1F)
+        let polling = try RazerCommands.setPollingRate(.hz250, transactionID: 0x3F)
         let battery = try RazerCommands.getBatteryLevel(transactionID: 0x1F)
         let charging = try RazerCommands.getChargingStatus(transactionID: 0x1F)
 
         XCTAssertEqual([dpi.commandClass, dpi.commandID], [0x04, 0x05])
         XCTAssertEqual(dpi.arguments, [0x01, 0x3E, 0x80, 0x3E, 0x80, 0, 0])
+        XCTAssertEqual(highDPI.arguments, [0x01, 0x88, 0xB8, 0x88, 0xB8, 0, 0])
         XCTAssertEqual([polling.commandClass, polling.commandID], [0x00, 0x05])
-        XCTAssertEqual(polling.arguments, [0x01])
+        XCTAssertEqual(polling.arguments, [0x04])
         XCTAssertEqual([battery.commandClass, battery.commandID], [0x07, 0x80])
         XCTAssertEqual([charging.commandClass, charging.commandID], [0x07, 0x84])
     }
@@ -212,12 +214,12 @@ final class RazerProtocolTests: XCTestCase {
             status: .successful,
             arguments: [0x01, 0x3E, 0x80, 0x3E, 0x80, 0, 0]
         )
-        let polling = RazerResponse(status: .successful, arguments: [0x02])
+        let polling = RazerResponse(status: .successful, arguments: [0x04])
         let battery = RazerResponse(status: .successful, arguments: [0, 128])
         let charging = RazerResponse(status: .successful, arguments: [0, 1])
 
         XCTAssertEqual(DeviceResponseDecoder.dpi(from: dpi), 16_000)
-        XCTAssertEqual(DeviceResponseDecoder.pollingRate(from: polling), .hz500)
+        XCTAssertEqual(DeviceResponseDecoder.pollingRate(from: polling), .hz250)
         XCTAssertEqual(DeviceResponseDecoder.batteryPercentage(from: battery), 50)
         XCTAssertEqual(DeviceResponseDecoder.isCharging(from: charging), true)
     }

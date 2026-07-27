@@ -28,6 +28,19 @@ struct MenuContent: View {
             Task { await model.refresh() }
         }
         Divider()
+        if #available(macOS 14.0, *) {
+            SettingsLink {
+                Text("Settings…")
+            }
+        } else {
+            Button("Settings…") {
+                NSApp.sendAction(
+                    Selector(("showSettingsWindow:")),
+                    to: nil,
+                    from: nil
+                )
+            }
+        }
         Button("Quit Raze") {
             NSApp.terminate(nil)
         }

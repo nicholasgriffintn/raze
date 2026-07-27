@@ -2,12 +2,14 @@ import Foundation
 
 public enum PollingRate: Int, Codable, CaseIterable, Sendable {
     case hz125 = 125
+    case hz250 = 250
     case hz500 = 500
     case hz1000 = 1000
 
     var protocolValue: UInt8 {
         switch self {
         case .hz125: 0x08
+        case .hz250: 0x04
         case .hz500: 0x02
         case .hz1000: 0x01
         }
@@ -16,6 +18,7 @@ public enum PollingRate: Int, Codable, CaseIterable, Sendable {
     init?(protocolValue: UInt8) {
         switch protocolValue {
         case 0x08: self = .hz125
+        case 0x04: self = .hz250
         case 0x02: self = .hz500
         case 0x01: self = .hz1000
         default: return nil
@@ -58,7 +61,7 @@ public extension RazerDevice {
         let supportsBattery = [
             "wireless", "receiver", "bluetooth", "hyperspeed", "ultimate", "dock"
         ].contains { lowercasedName.contains($0) }
-        let maximumDPI = productID == 0x005C ? 16_000 : 20_000
+        let maximumDPI = knownMaximumDPI[productID] ?? 20_000
         return .init(
             dpiRange: 100...maximumDPI,
             pollingRates: PollingRate.allCases,
@@ -67,9 +70,33 @@ public extension RazerDevice {
     }
 }
 
+private let knownMaximumDPI: [UInt16: Int] = [
+    0x005C: 16_000,
+    0x00AA: 30_000,
+    0x00AB: 30_000,
+    0x00AF: 30_000,
+    0x00B0: 30_000,
+    0x00B2: 30_000,
+    0x00B6: 35_000,
+    0x00B7: 35_000,
+    0x00B8: 30_000,
+    0x00B9: 18_000,
+    0x00C0: 35_000,
+    0x00C1: 35_000,
+    0x00C2: 35_000,
+    0x00C3: 35_000,
+    0x00C4: 26_000,
+    0x00C5: 26_000,
+    0x00CB: 35_000,
+    0x00CC: 35_000,
+    0x00CD: 35_000,
+    0x00D6: 35_000,
+    0x00D7: 35_000
+]
+
 public extension RazerCommands {
     static func setDPI(_ dpi: Int, transactionID: UInt8) throws -> RazerCommand {
-        let clamped = UInt16(clamping: min(max(dpi, 100), 26_000))
+        let clamped = UInt16(clamping: max(dpi, 100))
         let high = UInt8((clamped >> 8) & 0xFF)
         let low = UInt8(clamped & 0xFF)
         return try RazerCommand(

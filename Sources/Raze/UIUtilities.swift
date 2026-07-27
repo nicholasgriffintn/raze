@@ -1,12 +1,25 @@
 #if os(macOS)
 import AppKit
 import RazerCore
+import ServiceManagement
 import SwiftUI
 
 enum PrivacySettings {
     static let inputMonitoringURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     )!
+}
+
+extension SMAppService.Status {
+    var displayName: String {
+        switch self {
+        case .enabled: "Enabled"
+        case .notRegistered: "Off"
+        case .requiresApproval: "Requires approval"
+        case .notFound: "Unavailable"
+        @unknown default: "Unknown"
+        }
+    }
 }
 
 extension DeviceKind {

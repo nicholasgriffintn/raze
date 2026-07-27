@@ -25,6 +25,7 @@ Raze requires macOS 13 or later.
 - Interactive device map with direct per-zone lighting and brightness controls
 - Mouse DPI, polling rate, and battery status where supported
 - Local profiles, including automatic launch, power, sleep, and lock events
+- Launch at Login from the native Settings window
 - Universal Apple silicon and Intel builds
 
 Profiles are stored at:
